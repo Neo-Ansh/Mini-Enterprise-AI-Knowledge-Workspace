@@ -57,10 +57,17 @@ class AddSessionToWorkspace(BaseModel):
 
 @router.post("/auth/register", response_model=TokenResponse)
 async def register(data: UserRegister, db: MongoDB = Depends(get_db)):
+    """
+    Register a new user.
+    First user to register automatically becomes admin.
+    All subsequent users are members.
+    """
+    # Check if email already exists
     existing = await db.get_user_by_email(data.email)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered.")
 
+    # First user becomes admin
     count = await db.user_count()
     role = "admin" if count == 0 else "member"
 
@@ -137,6 +144,7 @@ async def list_users(
     current_user: dict = Depends(require_admin),
     db: MongoDB = Depends(get_db)
 ):
+    """Admin only — list all team members."""
     users = await db.list_users()
     return {"users": users}
 
@@ -155,6 +163,7 @@ async def upload_pdf(
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
 
+    # 20MB file size limit
     file_bytes = await file.read()
     if len(file_bytes) > 20 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large. Maximum size is 20MB.")
@@ -169,8 +178,10 @@ async def upload_pdf(
         pdf_rag = PDFRAG(file_bytes)
         session_id = str(uuid.uuid4())
 
+        # Store PDF bytes
         await db.store_session(session_id, file_bytes)
 
+        # Store metadata — now we know who uploaded what
         user_full = await db.get_user_by_id(current_user["id"])
         await db.store_document_meta(
             session_id=session_id,
@@ -194,6 +205,7 @@ async def upload_pdf(
         }
 
     except ValueError as e:
+        # Empty PDF guard from rag.py
         logger.warning("PDF rejected", extra={"error": str(e)})
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -225,35 +237,14 @@ async def chat_with_pdf(
 
     try:
         answer = pdf_rag.query(request.question)
-
-        # ── Phase 3: save to chat history ─────────────────────────────
-        await db.save_chat_message(
-            session_id=session_id,
-            user_id=current_user["id"],
-            question=request.question,
-            answer=answer
-        )
-
         logger.info("answer_generated", extra={
             "session_id": session_id,
             "user_id": current_user["id"]
         })
         return {"answer": answer}
-
     except Exception as e:
         logger.error("query_failed", extra={"error": str(e)})
         raise HTTPException(status_code=500, detail=f"Error during query: {str(e)}")
-
-
-# ── Phase 3: get chat history for a session ───────────────────────────
-@router.get("/chat/history/{session_id}")
-async def get_chat_history(
-    session_id: str,
-    current_user: dict = Depends(get_current_user),
-    db: MongoDB = Depends(get_db)
-):
-    history = await db.get_chat_history(session_id)
-    return {"session_id": session_id, "history": history}
 
 
 @router.get("/documents")

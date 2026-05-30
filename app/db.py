@@ -16,14 +16,12 @@ class MongoDB:
     def __init__(self):
         self.use_in_memory = False
         self.in_memory_storage = {}
-        self.in_memory_chat_history = {}  # ← Phase 3: fallback chat history
         self.client = None
         self.db = None
         self.sessions = None
         self.workspaces = None
         self.users = None
         self.documents = None
-        self.chat_history = None  # ← Phase 3: new collection
 
         try:
             self.client = AsyncIOMotorClient(
@@ -40,7 +38,6 @@ class MongoDB:
             self.workspaces = self.db["workspaces"]
             self.users = self.db["users"]
             self.documents = self.db["documents"]
-            self.chat_history = self.db["chat_history"]  # ← Phase 3
 
             logger.info(
                 "mongodb_client_initialized",
@@ -352,67 +349,3 @@ class MongoDB:
         except Exception as e:
             logger.error("delete_workspace_failed", extra={"workspace_id": workspace_id, "error": str(e)})
             return False
-
-    # ── Chat history methods ── Phase 3 ───────────────────────────────
-
-    async def save_chat_message(
-        self,
-        session_id: str,
-        user_id: str,
-        question: str,
-        answer: str
-    ) -> bool:
-        doc = {
-            "session_id": session_id,
-            "user_id": user_id,
-            "question": question,
-            "answer": answer,
-            "timestamp": datetime.utcnow()
-        }
-        # In-memory fallback
-        if self.use_in_memory:
-            if session_id not in self.in_memory_chat_history:
-                self.in_memory_chat_history[session_id] = []
-            self.in_memory_chat_history[session_id].append(doc)
-            logger.info("chat_saved_memory", extra={"session_id": session_id})
-            return True
-        try:
-            await self.chat_history.insert_one(doc)
-            logger.info("chat_saved_mongodb", extra={"session_id": session_id})
-            return True
-        except Exception as e:
-            logger.error("save_chat_failed", extra={"session_id": session_id, "error": str(e)})
-            # Fallback to memory on error
-            if session_id not in self.in_memory_chat_history:
-                self.in_memory_chat_history[session_id] = []
-            self.in_memory_chat_history[session_id].append(doc)
-            return True
-
-    async def get_chat_history(self, session_id: str) -> list:
-        # In-memory fallback
-        if self.use_in_memory:
-            history = self.in_memory_chat_history.get(session_id, [])
-            return [
-                {
-                    "question": h["question"],
-                    "answer": h["answer"],
-                    "timestamp": h["timestamp"].isoformat()
-                }
-                for h in history
-            ]
-        try:
-            cursor = self.chat_history.find(
-                {"session_id": session_id},
-                {"_id": 0, "question": 1, "answer": 1, "timestamp": 1}
-            ).sort("timestamp", 1)
-            history = []
-            async for doc in cursor:
-                history.append({
-                    "question": doc["question"],
-                    "answer": doc["answer"],
-                    "timestamp": doc["timestamp"].isoformat()
-                })
-            return history
-        except Exception as e:
-            logger.error("get_chat_history_failed", extra={"session_id": session_id, "error": str(e)})
-            return []
