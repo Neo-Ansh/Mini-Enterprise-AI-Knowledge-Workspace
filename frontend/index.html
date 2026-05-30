@@ -11,7 +11,9 @@
     <div class="container">
         <header>
             <h1>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                     <polyline points="14 2 14 8 20 8"></polyline>
                     <line x1="16" y1="13" x2="8" y2="13"></line>
@@ -20,13 +22,22 @@
                 </svg>
                 RAGReader
             </h1>
+
+            <!-- User info + logout shown after auth check -->
+            <div class="header-user" id="headerUser" style="display:none;">
+                <span class="user-name" id="headerUserName"></span>
+                <span class="user-role" id="headerUserRole"></span>
+                <button class="logout-btn" onclick="handleLogout()">Logout</button>
+            </div>
         </header>
 
         <div class="app-container">
             <section class="upload-section" id="uploadSection">
                 <div class="upload-header">
                     <h2>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" width="18" height="18">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                             <polyline points="17 8 12 3 7 8"></polyline>
                             <line x1="12" y1="3" x2="12" y2="15"></line>
@@ -34,17 +45,22 @@
                         Upload PDF
                     </h2>
                     <button class="toggle-btn" id="toggleUpload">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" width="18" height="18">
                             <polyline points="18 15 12 9 6 15"></polyline>
                         </svg>
                     </button>
                 </div>
-                
+
                 <div class="upload-content">
                     <div class="file-upload">
                         <div class="upload-dropzone" id="dropzone">
                             <div class="upload-icon">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="48" height="48">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                                    fill="none" stroke="currentColor" stroke-width="2"
+                                    stroke-linecap="round" stroke-linejoin="round"
+                                    width="48" height="48">
                                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                                     <polyline points="14 2 14 8 20 8"></polyline>
                                     <line x1="16" y1="13" x2="8" y2="13"></line>
@@ -54,12 +70,16 @@
                             </div>
                             <h3>Drag & Drop your PDF here</h3>
                             <p>or click to browse files</p>
-                            <input type="file" id="pdfInput" class="file-input" accept="application/pdf" onclick="event.stopPropagation()">
+                            <input type="file" id="pdfInput" class="file-input"
+                                accept="application/pdf" onclick="event.stopPropagation()">
                             <label for="pdfInput" class="browse-label"></label>
                         </div>
-                        
+
                         <button type="button" id="uploadBtn" class="upload-btn" disabled>
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round"
+                                width="18" height="18">
                                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                                 <polyline points="17 8 12 3 7 8"></polyline>
                                 <line x1="12" y1="3" x2="12" y2="15"></line>
@@ -67,7 +87,7 @@
                             Upload PDF
                         </button>
                     </div>
-                    
+
                     <div id="uploadStatus" class="upload-status"></div>
                 </div>
             </section>
@@ -75,23 +95,29 @@
             <section class="chat-section" id="chatSection">
                 <div class="chat-header">
                     <h2>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" width="18" height="18">
                             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                         </svg>
                         Chat with your PDF
                     </h2>
                     <div class="session-info" id="sessionInfo">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" width="14" height="14">
                             <circle cx="12" cy="12" r="10"></circle>
                             <polyline points="12 6 12 12 16 14"></polyline>
                         </svg>
                         Session active
                     </div>
                 </div>
-                
+
                 <div id="chatWindow">
                     <div class="no-messages" id="noMessages">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round">
                             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
                             <line x1="9" y1="9" x2="15" y2="9"></line>
                             <line x1="9" y1="13" x2="15" y2="13"></line>
@@ -100,11 +126,14 @@
                         <p>Ask a question about your document</p>
                     </div>
                 </div>
-                
+
                 <div class="chat-input-container">
-                    <input type="text" id="chatInput" placeholder="Type your question..." disabled>
+                    <input type="text" id="chatInput"
+                        placeholder="Type your question..." disabled>
                     <button id="sendBtn" disabled>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" width="18" height="18">
                             <line x1="22" y1="2" x2="11" y2="13"></line>
                             <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
                         </svg>
@@ -114,6 +143,8 @@
         </div>
     </div>
 
+    <!-- auth.js must load before script.js so getToken() is available -->
+    <script src="auth.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

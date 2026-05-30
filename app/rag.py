@@ -1,43 +1,85 @@
-# app/rag.py
 import io
-from PyPDF2 import PdfReader
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.text_splitter import CharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain.chains import RetrievalQA
+import google.generativeai as genai
 
-from app.config import OPENAI_API_KEY
+from PyPDF2 import PdfReader
+from langchain_text_splitters import CharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import FakeEmbeddings
+
+from app.config import GEMINI_API_KEY
+
 
 class PDFRAG:
     def __init__(self, file_bytes: bytes):
+
+        if not GEMINI_API_KEY:
+            raise ValueError("Missing GEMINI_API_KEY")
+
+        genai.configure(api_key=GEMINI_API_KEY)
+
         self.text = self.extract_text(file_bytes)
+
+        if not self.text.strip():
+            raise ValueError(
+                "PDF contains no extractable text. "
+                "Scanned/image PDFs are  not supported."
+            )
+
         self.vectorstore = self.create_vectorstore(self.text)
-        self.qa_chain = self.create_qa_chain(self.vectorstore)
+
+        self.model = genai.GenerativeModel("models/gemini-2.5-flash")
 
     def extract_text(self, file_bytes: bytes) -> str:
-        """Extract text from a PDF file given as bytes."""
+
         pdf_reader = PdfReader(io.BytesIO(file_bytes))
+
         text = ""
+
         for page in pdf_reader.pages:
+
             page_text = page.extract_text()
+
             if page_text:
                 text += page_text + "\n"
+
         return text
 
     def create_vectorstore(self, text: str):
-        """Split text into chunks and create a FAISS vector store."""
-        text_splitter = CharacterTextSplitter(separator="\n", chunk_size=1000, chunk_overlap=200)
-        texts = text_splitter.split_text(text)
-        embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-        vectorstore = FAISS.from_texts(texts, embeddings)
-        return vectorstore
 
-    def create_qa_chain(self, vectorstore):
-        """Create a RetrievalQA chain using the vector store."""
-        llm = ChatOpenAI(openai_api_key=OPENAI_API_KEY, temperature=0)
-        qa_chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=vectorstore.as_retriever())
-        return qa_chain
+        splitter = CharacterTextSplitter(
+            separator="\n",
+            chunk_size=1000,
+            chunk_overlap=200
+        )
+
+        texts = splitter.split_text(text)
+
+        # temporary local embeddings
+        embeddings = FakeEmbeddings(size=1352)
+
+        return FAISS.from_texts(texts, embeddings)
 
     def query(self, question: str) -> str:
-        """Get an answer for the question using the QA chain."""
-        return self.qa_chain.run(question)
+
+        docs = self.vectorstore.similarity_search(
+            question,
+            k=4
+        )
+
+        context = "\n\n".join(
+            [doc.page_content for doc in docs]
+        )
+
+        prompt = f"""
+Answer the question based only on the context below.
+
+Context:
+{context}
+
+Question:
+{question}
+"""
+
+        response = self.model.generate_content(prompt)
+
+        return response.text

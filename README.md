@@ -1,4 +1,6 @@
 # PDF RAG Chatbot System
+for mongo atlas setup id used is "anshnew123321@gmail.com"
+
 
 A simple web app that allows you to chat with your PDF documents using Retrieval Augmented Generation (RAG) technology. Upload any PDF and ask questions about its content to receive accurate, context-aware answers.
 
