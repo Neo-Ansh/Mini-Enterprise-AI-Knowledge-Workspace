@@ -16,12 +16,15 @@ class MongoDB:
     def __init__(self):
         self.use_in_memory = False
         self.in_memory_storage = {}
+        self.in_memory_chat_history = {}
         self.client = None
         self.db = None
         self.sessions = None
         self.workspaces = None
         self.users = None
         self.documents = None
+        self.chat_history = None
+        self.workspace_members = None          # ← Phase 5.5-B
 
         try:
             self.client = AsyncIOMotorClient(
@@ -38,6 +41,8 @@ class MongoDB:
             self.workspaces = self.db["workspaces"]
             self.users = self.db["users"]
             self.documents = self.db["documents"]
+            self.chat_history = self.db["chat_history"]
+            self.workspace_members = self.db["workspace_members"]  # ← Phase 5.5-B
 
             logger.info(
                 "mongodb_client_initialized",
@@ -155,23 +160,26 @@ class MongoDB:
         name: str,
         email: str,
         hashed_password: str,
-        role: str = "member"
+        role: str = "member",
+        status: str = "pending"
     ) -> dict:
         doc = {
             "name": name,
             "email": email,
             "hashed_password": hashed_password,
             "role": role,
+            "status": status,
             "created_at": datetime.utcnow()
         }
         result = await self.users.insert_one(doc)
         user_id = str(result.inserted_id)
-        logger.info("user_created", extra={"user_id": user_id, "role": role})
+        logger.info("user_created", extra={"user_id": user_id, "role": role, "status": status})
         return {
             "id": user_id,
             "name": name,
             "email": email,
             "role": role,
+            "status": status,
             "created_at": doc["created_at"]
         }
 
@@ -186,6 +194,7 @@ class MongoDB:
                 "email": user["email"],
                 "hashed_password": user["hashed_password"],
                 "role": user["role"],
+                "status": user.get("status", "approved"),
                 "created_at": user["created_at"]
             }
         except Exception as e:
@@ -202,6 +211,7 @@ class MongoDB:
                 "name": user["name"],
                 "email": user["email"],
                 "role": user["role"],
+                "status": user.get("status", "approved"),
                 "created_at": user["created_at"]
             }
         except Exception as e:
@@ -218,6 +228,7 @@ class MongoDB:
                     "name": u["name"],
                     "email": u["email"],
                     "role": u["role"],
+                    "status": u.get("status", "approved"),
                     "created_at": u["created_at"]
                 })
             return users
@@ -230,6 +241,119 @@ class MongoDB:
             return await self.users.count_documents({})
         except Exception:
             return 0
+
+    # ── User approval methods ─────────────────────────────────────────
+
+    async def get_pending_users(self) -> list:
+        try:
+            cursor = self.users.find(
+                {"status": "pending"},
+                {"hashed_password": 0}
+            )
+            users = []
+            async for u in cursor:
+                users.append({
+                    "id": str(u["_id"]),
+                    "name": u["name"],
+                    "email": u["email"],
+                    "role": u["role"],
+                    "status": u.get("status", "pending"),
+                    "created_at": u["created_at"]
+                })
+            return users
+        except Exception as e:
+            logger.error("get_pending_users_failed", extra={"error": str(e)})
+            return []
+
+    async def update_user_status(self, user_id: str, status: str) -> bool:
+        try:
+            result = await self.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {"status": status}}
+            )
+            if result.modified_count > 0:
+                logger.info("user_status_updated", extra={"user_id": user_id, "status": status})
+                return True
+            logger.warning("user_status_update_not_found", extra={"user_id": user_id})
+            return False
+        except Exception as e:
+            logger.error("update_user_status_failed", extra={"user_id": user_id, "error": str(e)})
+            return False
+    
+    async def get_dashboard_stats(self) -> dict:
+        """
+        Returns counts for admin dashboard.
+        total_users, pending_users, total_workspaces, total_documents
+        """
+        try:
+            total_users = await self.users.count_documents({})
+            pending_users = await self.users.count_documents({"status": "pending"})
+            approved_users = await self.users.count_documents({"status": "approved"})
+            rejected_users = await self.users.count_documents({"status": "rejected"})
+            total_workspaces = await self.workspaces.count_documents({})
+            total_documents = await self.documents.count_documents({})
+            return {
+                "total_users": total_users,
+                "pending_users": pending_users,
+                "approved_users": approved_users,
+                "rejected_users": rejected_users,
+                "total_workspaces": total_workspaces,
+                "total_documents": total_documents
+            }
+        except Exception as e:
+            logger.error("get_dashboard_stats_failed", extra={"error": str(e)})
+            return {}
+
+    async def update_user_role(self, user_id: str, role: str) -> bool:
+        """
+        Admin changes a user's system role.
+        role must be 'admin', 'member', or 'viewer'
+        """
+        try:
+            result = await self.users.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {"role": role}}
+            )
+            if result.modified_count > 0:
+                logger.info(
+                    "user_role_updated",
+                    extra={"user_id": user_id, "role": role}
+                )
+                return True
+            logger.warning(
+                "user_role_update_not_found",
+                extra={"user_id": user_id}
+            )
+            return False
+        except Exception as e:
+            logger.error(
+                "update_user_role_failed",
+                extra={"user_id": user_id, "error": str(e)}
+            )
+            return False
+
+    async def delete_user(self, user_id: str) -> bool:
+        """
+        Permanently removes a user from the system.
+        Also removes all their workspace memberships.
+        """
+        try:
+            # Remove from workspace_members collection
+            await self.workspace_members.delete_many({"user_id": user_id})
+
+            # Remove user document
+            result = await self.users.delete_one({"_id": ObjectId(user_id)})
+            if result.deleted_count > 0:
+                logger.info("user_deleted", extra={"user_id": user_id})
+                return True
+            logger.warning("user_delete_not_found", extra={"user_id": user_id})
+            return False
+        except Exception as e:
+            logger.error(
+                "delete_user_failed",
+                extra={"user_id": user_id, "error": str(e)}
+            )
+            return False
 
     # ── Document metadata methods ─────────────────────────────────────
 
@@ -349,3 +473,275 @@ class MongoDB:
         except Exception as e:
             logger.error("delete_workspace_failed", extra={"workspace_id": workspace_id, "error": str(e)})
             return False
+
+    async def get_workspace_sessions_with_meta(self, workspace_id: str) -> list:
+        """
+        Returns all documents in a workspace with session_id and pdf_name.
+        Used by WorkspaceRAG to load all PDFs for multi-doc chat.
+        """
+        if self.use_in_memory:
+            return []
+        try:
+            ws = await self.workspaces.find_one({"_id": ObjectId(workspace_id)})
+            if not ws:
+                return []
+
+            session_ids = ws.get("sessions", [])
+            if not session_ids:
+                return []
+
+            result = []
+            for session_id in session_ids:
+                meta = await self.documents.find_one(
+                    {"session_id": session_id},
+                    {"_id": 0, "session_id": 1, "pdf_name": 1}
+                )
+                if meta:
+                    result.append({
+                        "session_id": meta["session_id"],
+                        "pdf_name": meta.get("pdf_name", "unknown.pdf")
+                    })
+            return result
+        except Exception as e:
+            logger.error("get_workspace_sessions_with_meta_failed", extra={
+                "workspace_id": workspace_id,
+                "error": str(e)
+            })
+            return []
+            
+        
+
+    # ── Workspace membership methods ── Phase 5.5-B ───────────────────
+
+    async def assign_member_to_workspace(
+        self,
+        workspace_id: str,
+        user_id: str,
+        workspace_role: str,
+        added_by: str
+    ) -> bool:
+        if self.use_in_memory:
+            return False
+        try:
+            # Check if already assigned — update role if so
+            existing = await self.workspace_members.find_one({
+                "workspace_id": workspace_id,
+                "user_id": user_id
+            })
+            if existing:
+                await self.workspace_members.update_one(
+                    {"workspace_id": workspace_id, "user_id": user_id},
+                    {"$set": {"workspace_role": workspace_role}}
+                )
+                logger.info("workspace_member_role_updated", extra={
+                    "workspace_id": workspace_id,
+                    "user_id": user_id,
+                    "workspace_role": workspace_role
+                })
+                return True
+
+            doc = {
+                "workspace_id": workspace_id,
+                "user_id": user_id,
+                "workspace_role": workspace_role,
+                "added_by": added_by,
+                "added_at": datetime.utcnow()
+            }
+            await self.workspace_members.insert_one(doc)
+            logger.info("workspace_member_assigned", extra={
+                "workspace_id": workspace_id,
+                "user_id": user_id,
+                "workspace_role": workspace_role
+            })
+            return True
+        except Exception as e:
+            logger.error("assign_member_failed", extra={
+                "workspace_id": workspace_id,
+                "user_id": user_id,
+                "error": str(e)
+            })
+            return False
+
+    async def remove_member_from_workspace(
+        self,
+        workspace_id: str,
+        user_id: str
+    ) -> bool:
+        if self.use_in_memory:
+            return False
+        try:
+            result = await self.workspace_members.delete_one({
+                "workspace_id": workspace_id,
+                "user_id": user_id
+            })
+            return result.deleted_count > 0
+        except Exception as e:
+            logger.error("remove_member_failed", extra={
+                "workspace_id": workspace_id,
+                "user_id": user_id,
+                "error": str(e)
+            })
+            return False
+
+    async def get_workspace_members(self, workspace_id: str) -> list:
+        if self.use_in_memory:
+            return []
+        try:
+            cursor = self.workspace_members.find(
+                {"workspace_id": workspace_id},
+                {"_id": 0}
+            )
+            members = []
+            async for m in cursor:
+                # Fetch user details for each member
+                user = await self.get_user_by_id(m["user_id"])
+                if user:
+                    members.append({
+                        "user_id": m["user_id"],
+                        "name": user["name"],
+                        "email": user["email"],
+                        "workspace_role": m["workspace_role"],
+                        "added_at": m["added_at"]
+                    })
+            return members
+        except Exception as e:
+            logger.error("get_workspace_members_failed", extra={
+                "workspace_id": workspace_id,
+                "error": str(e)
+            })
+            return []
+
+    async def get_user_workspace_role(
+        self,
+        workspace_id: str,
+        user_id: str
+    ) -> str | None:
+        # Returns workspace_role if user is member of workspace
+        # Returns None if user has no access
+        if self.use_in_memory:
+            return None
+        try:
+            membership = await self.workspace_members.find_one({
+                "workspace_id": workspace_id,
+                "user_id": user_id
+            })
+            if membership:
+                return membership["workspace_role"]
+            return None
+        except Exception as e:
+            logger.error("get_user_workspace_role_failed", extra={
+                "workspace_id": workspace_id,
+                "user_id": user_id,
+                "error": str(e)
+            })
+            return None
+
+    async def get_workspaces_for_user(self, user_id: str) -> list:
+        # Returns all workspaces a user is assigned to
+        if self.use_in_memory:
+            return []
+        try:
+            cursor = self.workspace_members.find(
+                {"user_id": user_id},
+                {"_id": 0}
+            )
+            workspace_ids = []
+            async for m in cursor:
+                workspace_ids.append(m["workspace_id"])
+
+            if not workspace_ids:
+                return []
+
+            # Fetch workspace details for each
+            workspaces = []
+            for wid in workspace_ids:
+                try:
+                    ws = await self.workspaces.find_one({"_id": ObjectId(wid)})
+                    if ws:
+                        # Get user role in this workspace
+                        membership = await self.workspace_members.find_one({
+                            "workspace_id": wid,
+                            "user_id": user_id
+                        })
+                        workspaces.append({
+                            "id": str(ws["_id"]),
+                            "name": ws["name"],
+                            "description": ws.get("description", ""),
+                            "sessions": ws.get("sessions", []),
+                            "workspace_role": membership["workspace_role"] if membership else "member",
+                            "created_at": ws.get("created_at")
+                        })
+                except Exception:
+                    continue
+            return workspaces
+        except Exception as e:
+            logger.error("get_workspaces_for_user_failed", extra={
+                "user_id": user_id,
+                "error": str(e)
+            })
+            return []
+
+    # ── Chat history methods ──────────────────────────────────────────
+
+    async def save_chat_message(
+        self,
+        session_id: str,
+        user_id: str,
+        question: str,
+        answer: str,
+        sources: list = []
+    ) -> bool:
+        doc = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "question": question,
+            "answer": answer,
+            "sources": sources,
+            "timestamp": datetime.utcnow()
+        }
+        if self.use_in_memory:
+            if session_id not in self.in_memory_chat_history:
+                self.in_memory_chat_history[session_id] = []
+            self.in_memory_chat_history[session_id].append(doc)
+            logger.info("chat_saved_memory", extra={"session_id": session_id})
+            return True
+        try:
+            await self.chat_history.insert_one(doc)
+            logger.info("chat_saved_mongodb", extra={"session_id": session_id})
+            return True
+        except Exception as e:
+            logger.error("save_chat_failed", extra={"session_id": session_id, "error": str(e)})
+            if session_id not in self.in_memory_chat_history:
+                self.in_memory_chat_history[session_id] = []
+            self.in_memory_chat_history[session_id].append(doc)
+            return True
+
+    async def get_chat_history(self, session_id: str) -> list:
+        if self.use_in_memory:
+            history = self.in_memory_chat_history.get(session_id, [])
+            return [
+                {
+                    "question": h["question"],
+                    "answer": h["answer"],
+                    "sources": h.get("sources", []),
+                    "timestamp": h["timestamp"].isoformat()
+                }
+                for h in history
+            ]
+        try:
+            cursor = self.chat_history.find(
+                {"session_id": session_id},
+                {"_id": 0, "question": 1, "answer": 1, "sources": 1, "timestamp": 1}
+            ).sort("timestamp", 1)
+            history = []
+            async for doc in cursor:
+                history.append({
+                    "question": doc["question"],
+                    "answer": doc["answer"],
+                    "sources": doc.get("sources", []),
+                    "timestamp": doc["timestamp"].isoformat()
+                })
+            return history
+        except Exception as e:
+            logger.error("get_chat_history_failed", extra={"session_id": session_id, "error": str(e)})
+            return []
