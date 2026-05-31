@@ -4,9 +4,10 @@
 // ── Token helpers ─────────────────────────────────────────────────────
 
 function saveAuth(data) {
-    // data = { access_token, user: { id, name, email, role } }
     localStorage.setItem('token', data.access_token);
-    localStorage.setItem('user', JSON.stringify(data.user));
+    if (data.user) {
+        localStorage.setItem('user', JSON.stringify(data.user));
+    }
 }
 
 function getToken() {
@@ -15,7 +16,13 @@ function getToken() {
 
 function getUser() {
     const user = localStorage.getItem('user');
-    return user ? JSON.parse(user) : null;
+    if (!user || user === 'undefined' || user === 'null') return null;
+    try {
+        return JSON.parse(user);
+    } catch (e) {
+        localStorage.removeItem('user');
+        return null;
+    }
 }
 
 function clearAuth() {
@@ -87,7 +94,6 @@ async function handleLogin() {
     const email = document.getElementById('loginEmail').value.trim();
     const password = document.getElementById('loginPassword').value;
 
-    // Basic validation
     if (!email || !password) {
         showError('loginError', 'Please fill in all fields.');
         return;
@@ -108,7 +114,6 @@ async function handleLogin() {
             saveAuth(data);
             redirectToApp();
         } else {
-            // data.detail is what FastAPI returns on error
             showError('loginError', data.detail || 'Login failed.');
         }
     } catch (err) {
@@ -127,7 +132,6 @@ async function handleRegister() {
     const email = document.getElementById('registerEmail').value.trim();
     const password = document.getElementById('registerPassword').value;
 
-    // Basic validation
     if (!name || !email || !password) {
         showError('registerError', 'Please fill in all fields.');
         return;
@@ -150,8 +154,25 @@ async function handleRegister() {
         const data = await response.json();
 
         if (response.ok) {
-            saveAuth(data);
-            redirectToApp();
+            // ── Key fix: check if token exists in response ────────────
+            // Admin → gets access_token → redirect to app
+            // Worker → gets pending message → stay on login page
+            if (data.access_token) {
+                saveAuth(data);
+                redirectToApp();
+            } else {
+                // Show pending approval message in green
+                const el = document.getElementById('registerError');
+                if (el) {
+                    el.textContent = data.message || 'Registration submitted. Awaiting admin approval.';
+                    el.style.color = '#10b981';
+                    el.style.display = 'block';
+                }
+                // Clear form fields
+                document.getElementById('registerName').value = '';
+                document.getElementById('registerEmail').value = '';
+                document.getElementById('registerPassword').value = '';
+            }
         } else {
             showError('registerError', data.detail || 'Registration failed.');
         }
@@ -171,7 +192,6 @@ document.addEventListener('DOMContentLoaded', function () {
         return;
     }
 
-    // Allow Enter key on login fields
     document.addEventListener('keydown', function (e) {
         if (e.key !== 'Enter') return;
         const loginForm = document.getElementById('loginForm');

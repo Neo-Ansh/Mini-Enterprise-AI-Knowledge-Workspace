@@ -1,5 +1,6 @@
 import io
 import re
+import hashlib                      # ← Phase 6: for cache key hashing
 import google.generativeai as genai
 
 from PyPDF2 import PdfReader
@@ -31,6 +32,11 @@ class PDFRAG:
         self.chunks = self.create_chunks(self.text)
         self.vectorstore = self.create_vectorstore(self.chunks)
         self.model = genai.GenerativeModel("models/gemini-2.5-flash")
+
+        # ── Phase 6: in-memory cache per session ──────────────────────
+        # key: md5 hash of question
+        # value: full result dict {answer, sources}
+        self._cache: dict = {}
 
     def extract_text(self, file_bytes: bytes) -> str:
         pdf_reader = PdfReader(io.BytesIO(file_bytes))
@@ -79,6 +85,18 @@ class PDFRAG:
         return [chunk for _, chunk in scored_chunks[:k]]
 
     def query(self, question: str) -> dict:
+
+        # ── Phase 6: check cache first ────────────────────────────────
+        cache_key = hashlib.md5(question.strip().lower().encode()).hexdigest()
+        if cache_key in self._cache:
+            cached = self._cache[cache_key]
+            return {
+                "answer": cached["answer"],
+                "sources": cached["sources"],
+                "cached": True          # tells frontend this was a cache hit
+            }
+
+        # ── Semantic search via FAISS ─────────────────────────────────
         semantic_docs = self.vectorstore.similarity_search(question, k=4)
         semantic_texts = [doc.page_content for doc in semantic_docs]
 
@@ -114,10 +132,16 @@ Question:
             for i, chunk in enumerate(merged)
         ]
 
-        return {
+        result = {
             "answer": response.text,
-            "sources": sources
+            "sources": sources,
+            "cached": False
         }
+
+        # ── Phase 6: store in cache ───────────────────────────────────
+        self._cache[cache_key] = result
+
+        return result
 
 
 # ── Phase 5.5-C: Multi-document workspace RAG ─────────────────────────
@@ -148,8 +172,6 @@ class WorkspaceRAG:
         genai.configure(api_key=GEMINI_API_KEY)
         self.model = genai.GenerativeModel("models/gemini-2.5-flash")
 
-        # Build combined chunk list with document tracking
-        # Each entry: {"text": "...", "pdf_name": "...", "session_id": "..."}
         self.tracked_chunks = []
 
         splitter = CharacterTextSplitter(
@@ -175,13 +197,15 @@ class WorkspaceRAG:
                     })
                     all_texts.append(chunk)
             except Exception:
-                # Skip unreadable PDFs silently
                 continue
 
         if not all_texts:
             raise ValueError("No readable documents found in this workspace.")
 
         self.vectorstore = FAISS.from_texts(all_texts, embeddings)
+
+        # ── Phase 6: in-memory cache per workspace query ──────────────
+        self._cache: dict = {}
 
     def _extract_text(self, file_bytes: bytes) -> str:
         pdf_reader = PdfReader(io.BytesIO(file_bytes))
@@ -193,7 +217,6 @@ class WorkspaceRAG:
         return text
 
     def _keyword_search(self, question: str, k: int = 4) -> list:
-        """Returns list of tracked_chunk dicts scored by keyword match."""
         stop_words = {
             "a", "an", "the", "is", "are", "was", "were", "be", "been",
             "being", "have", "has", "had", "do", "does", "did", "will",
@@ -219,11 +242,21 @@ class WorkspaceRAG:
         return [item for _, item in scored[:k]]
 
     def query(self, question: str) -> dict:
-        # Semantic search
+
+        # ── Phase 6: check cache first ────────────────────────────────
+        cache_key = hashlib.md5(question.strip().lower().encode()).hexdigest()
+        if cache_key in self._cache:
+            cached = self._cache[cache_key]
+            return {
+                "answer": cached["answer"],
+                "sources": cached["sources"],
+                "cached": True
+            }
+
+        # ── Semantic search ───────────────────────────────────────────
         semantic_docs = self.vectorstore.similarity_search(question, k=4)
         semantic_texts = [doc.page_content for doc in semantic_docs]
 
-        # Map semantic results back to tracked chunks
         semantic_tracked = []
         for text in semantic_texts:
             for tracked in self.tracked_chunks:
@@ -231,10 +264,8 @@ class WorkspaceRAG:
                     semantic_tracked.append(tracked)
                     break
 
-        # Keyword search returns tracked chunks directly
         keyword_tracked = self._keyword_search(question, k=4)
 
-        # Merge and deduplicate by first 100 chars of text
         seen = set()
         merged = []
         for tracked in semantic_tracked + keyword_tracked:
@@ -243,7 +274,6 @@ class WorkspaceRAG:
                 seen.add(key)
                 merged.append(tracked)
 
-        # Cap at 6
         merged = merged[:6]
 
         context = "\n\n".join([t["text"] for t in merged])
@@ -261,7 +291,6 @@ Question:
 """
         response = self.model.generate_content(prompt)
 
-        # Sources include document name so user knows which PDF answered
         sources = [
             {
                 "chunk_index": i + 1,
@@ -272,7 +301,13 @@ Question:
             for i, tracked in enumerate(merged)
         ]
 
-        return {
+        result = {
             "answer": response.text,
-            "sources": sources
+            "sources": sources,
+            "cached": False
         }
+
+        # ── Phase 6: store in cache ───────────────────────────────────
+        self._cache[cache_key] = result
+
+        return result
